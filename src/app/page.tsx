@@ -3,6 +3,7 @@
 // import WalletButton from "@/components/WalletButton";
 import { OrderBook } from "@/components/PolyOrderBook";
 import { CandleChart, usePolymarketCandles } from "@/components/Candle";
+import Balance from "@/components/Balance";
 
 export default function Home() {
   const {
@@ -21,6 +22,11 @@ export default function Home() {
 
   return (
     <div className="min-h-screen bg-zinc-50 font-sans dark:bg-black relative">
+      {/* Balance display in top right */}
+      <div className="fixed top-4 right-4 z-20">
+        <Balance />
+      </div>
+      
       <main className="container mx-auto px-4 py-8">
         <div className="flex flex-col items-center gap-8 mb-8">
           <h1 className="text-4xl font-bold leading-tight tracking-tight text-black dark:text-zinc-50">

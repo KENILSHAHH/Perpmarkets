@@ -150,13 +150,10 @@ function runMarketWs(assetIds) {
         if (msg.type) {
           console.log('[market] msg type:', msg.type);
         } else {
-          // Skip logging raw messages for price_change events
-          if (msg.event_type !== 'price_change') {
-            console.log(
-              '[market] raw message:',
-              Object.keys(msg).length ? msg : s
-            );
-          }
+          console.log(
+            '[market] raw message:',
+            Object.keys(msg).length ? msg : s
+          );
         }
         // if snapshot or book, print top-of-book
         if (msg.bids?.length && msg.asks?.length) {
@@ -234,7 +231,7 @@ function runUserWs(userMarkets) {
 }
 
 // Fetch event data from Polymarket API and extract CLOB IDs
-const eventSlug = 'bitcoin-up-or-down-november-23-1am-et';
+const eventSlug = 'bitcoin-up-or-down-november-23-5am-et';
 
 fetchPolymarketEvent(eventSlug)
   .then((data) => {
