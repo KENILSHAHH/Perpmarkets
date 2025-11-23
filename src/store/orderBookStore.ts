@@ -14,11 +14,23 @@ interface OrderBookState {
   asks: OrderEntry[];
   bids: OrderEntry[];
   addOrder: (order: OrderEntry) => void;
+  // Real-time prices from websocket (in cents)
+  upPrice: number | null;
+  downPrice: number | null;
+  // Asset IDs for UP and DOWN
+  upAssetId: string | null;
+  downAssetId: string | null;
+  setPrices: (upPrice: number | null, downPrice: number | null) => void;
+  setAssetIds: (upAssetId: string | null, downAssetId: string | null) => void;
 }
 
 export const useOrderBookStore = create<OrderBookState>((set) => ({
   asks: [],
   bids: [],
+  upPrice: null,
+  downPrice: null,
+  upAssetId: null,
+  downAssetId: null,
   addOrder: (order) =>
     set((state) => {
       if (order.type === "BUY") {
@@ -37,4 +49,6 @@ export const useOrderBookStore = create<OrderBookState>((set) => ({
       }
       return state;
     }),
+  setPrices: (upPrice, downPrice) => set({ upPrice, downPrice }),
+  setAssetIds: (upAssetId, downAssetId) => set({ upAssetId, downAssetId }),
 }));

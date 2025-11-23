@@ -10,12 +10,14 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@erc7824/nitrolite": "^0.4.0",
     "@tailwindcss/vite": "^4.1.17",
     "install": "^0.13.0",
     "lucide-react": "^0.554.0",
     "npm": "^11.6.3",
     "react": "^19.2.0",
     "react-dom": "^19.2.0",
+    "viem": "^2.39.3",
     "ws": "^8.18.3",
     "zustand": "^5.0.8"
   },

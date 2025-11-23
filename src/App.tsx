@@ -1,6 +1,7 @@
 import Candles from "./components/Candles";
 import BuyForm from "./components/BuyForm";
 import OrderBook from "./components/OrderBook";
+import { OrderBook as OldOrderBook } from "./components/OldOrderBook";
 
 export default function App() {
   return (
@@ -8,9 +9,16 @@ export default function App() {
       <div className="flex h-screen bg-black text-white overflow-hidden">
         {/* LEFT SIDE → 70% */}
         <div className="w-[70%] flex flex-col border-r border-gray-700">
-          {/* Top: ORDER BOOK takes 50% of left area */}
-          <div className="flex-1 overflow-auto p-4">
-            <OrderBook />
+          {/* Top: ORDER BOOKS side by side */}
+          <div className="flex-1 grid grid-cols-2 gap-4 p-4 overflow-auto">
+            <div className="overflow-auto">
+              <h3 className="text-sm text-gray-400 mb-2">Perpetual Orders Book</h3>
+              <OrderBook />
+            </div>
+            <div className="overflow-auto">
+              <h3 className="text-sm text-gray-400 mb-2">Polymarket Bids Order Book</h3>
+              <OldOrderBook />
+            </div>
           </div>
 
           {/* Bottom: Two candle charts side-by-side */}
