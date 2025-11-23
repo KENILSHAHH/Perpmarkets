@@ -9,21 +9,17 @@ const MAX_CANDLES = 10; // Show recent 10 candles
 
 type Side = "BUY" | "SELL";
 
-interface PriceChange {
+// New message structure for last_trade_price events
+interface LastTradePriceMessage {
+  market: string;
   asset_id: string;
   price: string;
   size: string;
+  fee_rate_bps: string;
   side: Side;
-  hash: string;
-  best_bid: string;
-  best_ask: string;
-}
-
-interface MarketMessage {
-  market: string;
-  price_changes: PriceChange[];
   timestamp: string;
-  event_type: string;
+  event_type: "last_trade_price";
+  transaction_hash: string;
 }
 
 export interface Candle {
@@ -36,54 +32,52 @@ export interface Candle {
 }
 
 
-// Hook to build candles from WebSocket messages for a specific asset (BUY only)
-// Creates candles by aggregating price changes within 1-second windows
+// Hook to build candles from last_trade_price WebSocket messages for a specific asset (BUY only)
+// Creates candles by aggregating prices within 1-second windows
+// Fills in missing seconds with constant candles (no volume) if no price updates
 function useCandlesFromWebSocket(
   assetId: string,
-  messages: MarketMessage[]
+  messages: LastTradePriceMessage[]
 ): Candle[] {
   const [candles, setCandles] = useState<Candle[]>([]);
   const seenHashesRef = useRef<Set<string>>(new Set());
   const lastProcessedIndexRef = useRef<number>(0);
+  const lastKnownPriceRef = useRef<number | null>(null);
+  const constantCandleIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   useEffect(() => {
-    if (!messages.length || !assetId) return;
+    if (!assetId) return;
 
-        const seenHashes = seenHashesRef.current;
+    const seenHashes = seenHashesRef.current;
     const newPrices: Array<{ price: number; time: Date }> = [];
 
     // Process only new messages
     const messagesToProcess = messages.slice(lastProcessedIndexRef.current);
     
     messagesToProcess.forEach((msg) => {
-      if (!msg.price_changes || !Array.isArray(msg.price_changes)) return;
+      // Only process last_trade_price events for this asset with BUY side
+      if (msg.event_type !== "last_trade_price") return;
+      if (msg.asset_id !== assetId) return;
+      if (msg.side !== "BUY") return;
 
-      // Only process BUY prices for this asset
-      const relevant = msg.price_changes.filter(
-        (pc) => pc.asset_id === assetId && pc.side === "BUY"
-      );
+      // Skip if already processed (use transaction_hash as unique identifier)
+      if (seenHashes.has(msg.transaction_hash)) return;
+      seenHashes.add(msg.transaction_hash);
 
-      if (relevant.length > 0) {
-        console.log(`[candle] Processing ${relevant.length} BUY prices for asset ${assetId.slice(0, 10)}...`);
+      const price = parseFloat(msg.price);
+      if (Number.isNaN(price)) {
+        console.warn("[candle] Invalid price:", msg.price);
+        return;
       }
 
-      relevant.forEach((pc) => {
-            // Skip if already processed
-            if (seenHashes.has(pc.hash)) return;
-            seenHashes.add(pc.hash);
+      // Update last known price
+      lastKnownPriceRef.current = price;
 
-        const price = parseFloat(pc.price);
-        if (Number.isNaN(price)) {
-          console.warn("[candle] Invalid price:", pc.price);
-          return;
-        }
+      const time = msg.timestamp
+        ? new Date(Number(msg.timestamp))
+        : new Date();
 
-        const time = msg.timestamp
-          ? new Date(Number(msg.timestamp))
-          : new Date();
-
-        newPrices.push({ price, time });
-      });
+      newPrices.push({ price, time });
     });
 
     // Update last processed index
@@ -135,7 +129,7 @@ function useCandlesFromWebSocket(
                 volume: existing.volume + prices.length, // Increment volume
               };
             } else {
-              // Create new candle - add to end and it will be sorted
+              // Create new candle
               updated.push({
                 time: candleTime,
                 open,
@@ -152,17 +146,73 @@ function useCandlesFromWebSocket(
           
           // Keep only the most recent MAX_CANDLES
           if (updated.length > MAX_CANDLES) {
-            const trimmed = updated.slice(updated.length - MAX_CANDLES);
-            console.log(`[candle] Trimmed candles from ${updated.length} to ${trimmed.length}`);
-            return trimmed;
+            return updated.slice(updated.length - MAX_CANDLES);
           }
           
-          console.log(`[candle] Updated to ${updated.length} candles`);
           return updated;
         });
       });
     }
   }, [assetId, messages]);
+
+  // Interval to create constant candles for missing seconds
+  useEffect(() => {
+    if (!assetId) return;
+
+    // Clear any existing interval
+    if (constantCandleIntervalRef.current) {
+      clearInterval(constantCandleIntervalRef.current);
+    }
+
+    // Check every second for missing candles
+    constantCandleIntervalRef.current = setInterval(() => {
+      const lastKnownPrice = lastKnownPriceRef.current;
+      if (lastKnownPrice === null) return; // No price data yet
+
+      setCandles((prev) => {
+        const now = new Date();
+        const currentSecond = Math.floor(now.getTime() / 1000) * 1000;
+        const currentSecondTimestamp = Math.floor(currentSecond / 1000);
+
+        // Check if we already have a candle for the current second
+        const hasCurrentCandle = prev.some(
+          (c) => Math.floor(c.time.getTime() / 1000) === currentSecondTimestamp
+        );
+
+        if (!hasCurrentCandle) {
+          // Create a constant candle with no volume
+          const constantCandle: Candle = {
+            time: new Date(currentSecond),
+            open: lastKnownPrice,
+            high: lastKnownPrice,
+            low: lastKnownPrice,
+            close: lastKnownPrice,
+            volume: 0, // No volume for constant candles
+          };
+
+          const updated = [...prev, constantCandle];
+          updated.sort((a, b) => a.time.getTime() - b.time.getTime());
+
+          // Keep only the most recent MAX_CANDLES
+          if (updated.length > MAX_CANDLES) {
+            return updated.slice(updated.length - MAX_CANDLES);
+          }
+
+          return updated;
+        }
+
+        return prev;
+      });
+    }, 1000); // Check every second
+
+    // Cleanup interval on unmount
+    return () => {
+      if (constantCandleIntervalRef.current) {
+        clearInterval(constantCandleIntervalRef.current);
+        constantCandleIntervalRef.current = null;
+      }
+    };
+  }, [assetId]);
 
   return candles;
 }
@@ -176,9 +226,11 @@ export function usePolymarketCandles() {
   const [assetIds] = useState<string[]>([ASSET_ID_A, ASSET_ID_B]);
   const [isLoading] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
-  const [messages, setMessages] = useState<MarketMessage[]>([]);
+  const [messages, setMessages] = useState<LastTradePriceMessage[]>([]);
   const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastMessageTimeRef = useRef<number>(0);
 
   // Connect to WebSocket with the specific asset IDs
   useEffect(() => {
@@ -234,6 +286,43 @@ export function usePolymarketCandles() {
             }
           }, 10000);
 
+          // Start health check to ensure connection is active
+          if (healthCheckIntervalRef.current) {
+            clearInterval(healthCheckIntervalRef.current);
+          }
+          // Initialize last message time on connection
+          lastMessageTimeRef.current = Date.now();
+          healthCheckIntervalRef.current = setInterval(() => {
+            // Skip health check if last message time is not initialized
+            if (lastMessageTimeRef.current === 0) {
+              return;
+            }
+
+            const timeSinceLastMessage = Date.now() - lastMessageTimeRef.current;
+            const connectionStaleThreshold = 30000; // 30 seconds
+
+            // Check if connection is open
+            if (ws.readyState !== WebSocket.OPEN) {
+              console.warn("[candle] WebSocket not open, reconnecting...");
+              setIsConnected(false);
+              if (wsRef.current) {
+                wsRef.current.close();
+              }
+              connect();
+              return;
+            }
+
+            // Check if connection is stale (no messages for too long)
+            if (timeSinceLastMessage > connectionStaleThreshold) {
+              console.warn("[candle] Connection appears stale, reconnecting...");
+              setIsConnected(false);
+              if (wsRef.current) {
+                wsRef.current.close();
+              }
+              connect();
+            }
+          }, 5000); // Check every 5 seconds
+
           wsRef.current = ws;
         };
 
@@ -241,12 +330,18 @@ export function usePolymarketCandles() {
           try {
             const s = event.data.toString();
             if (s === "PONG" || s === "PING") {
+              // Update last message time even for ping/pong to track connection health
+              lastMessageTimeRef.current = Date.now();
               return;
             }
 
-            const msg: MarketMessage = JSON.parse(s);
+            const msg: LastTradePriceMessage = JSON.parse(s);
 
-            if (msg.price_changes && Array.isArray(msg.price_changes)) {
+            // Update last message time
+            lastMessageTimeRef.current = Date.now();
+
+            // Only process last_trade_price events with BUY side
+            if (msg.event_type === "last_trade_price" && msg.side === "BUY") {
               setMessages((prev) => {
                 try {
                   const updated = [...prev, msg];
@@ -282,14 +377,28 @@ export function usePolymarketCandles() {
             pingIntervalRef.current = null;
           }
 
-          // Only reconnect if it wasn't a normal closure or intentional close
+          if (healthCheckIntervalRef.current) {
+            clearInterval(healthCheckIntervalRef.current);
+            healthCheckIntervalRef.current = null;
+          }
+
+          // Always try to reconnect (unless it was a normal closure)
           // Code 1000 = normal closure, 1001 = going away
           if (event.code !== 1000 && event.code !== 1001) {
-            // Reconnect after 3 seconds with exponential backoff
+            // Reconnect after 3 seconds
             const reconnectDelay = 3000;
             console.log(`[candle] Reconnecting in ${reconnectDelay}ms...`);
             setTimeout(() => {
               // Only reconnect if we don't have an active connection
+              if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+                connect();
+              }
+            }, reconnectDelay);
+          } else {
+            // Even for normal closures, try to reconnect after a delay to ensure constant connection
+            const reconnectDelay = 5000;
+            console.log(`[candle] Normal closure, reconnecting in ${reconnectDelay}ms to maintain connection...`);
+            setTimeout(() => {
               if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
                 connect();
               }
@@ -311,6 +420,10 @@ export function usePolymarketCandles() {
         clearInterval(pingIntervalRef.current);
         pingIntervalRef.current = null;
       }
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+        healthCheckIntervalRef.current = null;
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -326,7 +439,7 @@ export function usePolymarketCandles() {
   const candlesA = useCandlesFromWebSocket(assetA, messages);
   const candlesB = useCandlesFromWebSocket(assetB, messages);
 
-  // Get latest real-time buy prices from WebSocket messages
+  // Get latest real-time buy prices from last_trade_price WebSocket messages
   const [latestPriceA, setLatestPriceA] = useState<number | null>(null);
   const [latestPriceB, setLatestPriceB] = useState<number | null>(null);
   const lastProcessedPriceIndexRef = useRef<number>(0);
@@ -341,60 +454,32 @@ export function usePolymarketCandles() {
 
     // Go through all new messages and find the most recent BUY price for each asset
     newMessages.forEach((msg) => {
-      if (!msg.price_changes || !Array.isArray(msg.price_changes)) return;
+      // Only process last_trade_price events with BUY side
+      if (msg.event_type !== "last_trade_price" || msg.side !== "BUY") return;
 
-      // Find BUY prices for asset A - strict filtering
-      const buyPricesA = msg.price_changes
-        .filter((pc) => {
-          const matchesAsset = pc.asset_id === assetA;
-          const matchesSide = pc.side === "BUY";
-          return matchesAsset && matchesSide;
-        })
-        .map((pc) => {
-          const price = parseFloat(pc.price);
-          if (Number.isNaN(price)) {
-            console.warn(`[candle] Invalid price for Asset A: ${pc.price}`);
-            return null;
-          }
-          return price;
-        })
-        .filter((p): p is number => p !== null);
+      const price = parseFloat(msg.price);
+      if (Number.isNaN(price)) {
+        console.warn(`[candle] Invalid price: ${msg.price}`);
+        return;
+      }
 
-      // Find BUY prices for asset B - strict filtering
-      const buyPricesB = msg.price_changes
-        .filter((pc) => {
-          const matchesAsset = pc.asset_id === assetB;
-          const matchesSide = pc.side === "BUY";
-          return matchesAsset && matchesSide;
-        })
-        .map((pc) => {
-          const price = parseFloat(pc.price);
-          if (Number.isNaN(price)) {
-            console.warn(`[candle] Invalid price for Asset B: ${pc.price}`);
-            return null;
-          }
-          return price;
-        })
-        .filter((p): p is number => p !== null);
-
-      // Update latest prices (most recent message wins)
-      // Use the last price in the array (most recent in the message)
-      if (buyPricesA.length > 0) {
-        const newPriceA = buyPricesA[buyPricesA.length - 1];
+      // Update latest price for asset A
+      if (msg.asset_id === assetA) {
         // Only update if price is reasonable (not a huge jump)
-        if (latestBuyPriceA === null || Math.abs(newPriceA - latestBuyPriceA) < 0.5) {
-          latestBuyPriceA = newPriceA;
+        if (latestBuyPriceA === null || Math.abs(price - latestBuyPriceA) < 0.5) {
+          latestBuyPriceA = price;
         } else {
-          console.warn(`[candle] Skipping large price jump for Asset A: ${latestBuyPriceA} -> ${newPriceA}`);
+          console.warn(`[candle] Skipping large price jump for Asset A: ${latestBuyPriceA} -> ${price}`);
         }
       }
-      if (buyPricesB.length > 0) {
-        const newPriceB = buyPricesB[buyPricesB.length - 1];
+
+      // Update latest price for asset B
+      if (msg.asset_id === assetB) {
         // Only update if price is reasonable (not a huge jump)
-        if (latestBuyPriceB === null || Math.abs(newPriceB - latestBuyPriceB) < 0.5) {
-          latestBuyPriceB = newPriceB;
+        if (latestBuyPriceB === null || Math.abs(price - latestBuyPriceB) < 0.5) {
+          latestBuyPriceB = price;
         } else {
-          console.warn(`[candle] Skipping large price jump for Asset B: ${latestBuyPriceB} -> ${newPriceB}`);
+          console.warn(`[candle] Skipping large price jump for Asset B: ${latestBuyPriceB} -> ${price}`);
         }
       }
     });
@@ -406,11 +491,9 @@ export function usePolymarketCandles() {
     requestAnimationFrame(() => {
       if (latestBuyPriceA !== null) {
         setLatestPriceA(latestBuyPriceA);
-        console.log(`[candle] Latest BUY price for Asset A: ${latestBuyPriceA.toFixed(4)}`);
       }
       if (latestBuyPriceB !== null) {
         setLatestPriceB(latestBuyPriceB);
-        console.log(`[candle] Latest BUY price for Asset B: ${latestBuyPriceB.toFixed(4)}`);
       }
     });
   }, [messages, assetA, assetB]);

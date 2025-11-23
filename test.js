@@ -150,10 +150,13 @@ function runMarketWs(assetIds) {
         if (msg.type) {
           console.log('[market] msg type:', msg.type);
         } else {
-          console.log(
-            '[market] raw message:',
-            Object.keys(msg).length ? msg : s
-          );
+          // Skip logging raw messages for price_change events
+          if (msg.event_type !== 'price_change') {
+            console.log(
+              '[market] raw message:',
+              Object.keys(msg).length ? msg : s
+            );
+          }
         }
         // if snapshot or book, print top-of-book
         if (msg.bids?.length && msg.asks?.length) {
