@@ -26,7 +26,7 @@ interface MarketMessage {
   event_type: string
 }
 
-const EVENT_SLUG = "bitcoin-up-or-down-november-23-12am-et"
+const EVENT_SLUG = "bitcoin-up-or-down-november-23-1am-et"
 
 // Fetch event data from Polymarket Gamma API via Next.js API route (to avoid CORS)
 async function fetchPolymarketEvent(slug: string) {

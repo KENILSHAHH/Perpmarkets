@@ -231,7 +231,7 @@ function runUserWs(userMarkets) {
 }
 
 // Fetch event data from Polymarket API and extract CLOB IDs
-const eventSlug = 'bitcoin-up-or-down-november-23-12am-et';
+const eventSlug = 'bitcoin-up-or-down-november-23-1am-et';
 
 fetchPolymarketEvent(eventSlug)
   .then((data) => {
